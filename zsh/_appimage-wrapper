@@ -1,0 +1,53 @@
+#compdef appimage-wrapper
+
+_appimage-wrapper() {
+  local -a search_dirs
+  local -a app_names app_displays expl
+  local dir appimage_path file app version
+
+  if [[ -n "${APPIMAGE_WRAPPER_DIR:-}" ]]; then
+    search_dirs=("$APPIMAGE_WRAPPER_DIR")
+  else
+    search_dirs=("${path[@]}")
+  fi
+
+  for dir in "${search_dirs[@]}"; do
+    [[ -d "$dir" ]] || continue
+
+    for appimage_path in "$dir"/*-*.AppImage(N); do
+      file=${appimage_path:t}
+      if [[ ! "$file" =~ '^(.+)-([0-9].*)\.AppImage$' ]]; then
+        continue
+      fi
+      app=${match[1]}
+      version=${match[2]}
+
+      if (( ! ${app_names[(Ie)$app]} )); then
+        app_names+=("$app")
+        app_displays+=("$app -- latest matching version: $version")
+      fi
+    done
+  done
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show usage]' \
+    '--cleanup-old[delete older matching AppImages before launch]' \
+    '--flags-file[read AppImage arguments from this file instead of default flag files]:flags file:_files' \
+    '--no-flags[do not read AppImage flag files]' \
+    '--env-file[read AppImage environment from this file instead of default env files]:env file:_files' \
+    '--no-env[do not read AppImage env files]' \
+    '1:app name:->app' \
+    '*::argument:_files' && return
+
+  case $state in
+    app)
+      if (( ${#app_names} )); then
+        _wanted appimage-apps expl 'AppImage apps' compadd "$expl[@]" -d app_displays -a app_names
+      else
+        _message 'no AppImages found in PATH'
+      fi
+      ;;
+  esac
+}
+
+_appimage-wrapper "$@"

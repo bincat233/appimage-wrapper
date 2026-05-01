@@ -1,0 +1,89 @@
+#compdef appimage-desktop
+
+_appimage-desktop_app_names() {
+  local -a search_dirs app_names app_displays
+  local dir appimage_path file app version
+
+  if [[ -n "${APPIMAGE_WRAPPER_DIR:-}" ]]; then
+    search_dirs=("$APPIMAGE_WRAPPER_DIR")
+  else
+    search_dirs=("${path[@]}")
+  fi
+
+  for dir in "${search_dirs[@]}"; do
+    [[ -d "$dir" ]] || continue
+
+    for appimage_path in "$dir"/*-*.AppImage(N); do
+      file=${appimage_path:t}
+      if [[ ! "$file" =~ '^(.+)-([0-9].*)\.AppImage$' ]]; then
+        continue
+      fi
+      app=${match[1]}
+      version=${match[2]}
+
+      if (( ! ${app_names[(Ie)$app]} )); then
+        app_names+=("$app")
+        app_displays+=("$app -- latest matching version: $version")
+      fi
+    done
+  done
+
+  if (( ${#app_names} )); then
+    compadd -d app_displays -a app_names
+  else
+    _message 'no AppImages found in PATH'
+  fi
+}
+
+_appimage-desktop_categories() {
+  local -a categories suf
+
+  categories=(
+    'Utility:utility application'
+    'Development:software development'
+    'Network:network application'
+    'Graphics:graphics application'
+    'AudioVideo:audio or video application'
+    'Office:office application'
+    'System:system application'
+    'Settings:settings application'
+    'Education:education application'
+    'Game:game'
+  )
+
+  compset -P '*;'
+  compset -S ';*' || suf=(-qS ';')
+  _describe 'desktop category' categories "$suf[@]" -r ';=: \t\n\-'
+}
+
+_appimage-desktop() {
+  local state
+  local -a expl
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show usage]' \
+    '--name[desktop display name]:name:' \
+    '--comment[desktop comment]:comment:' \
+    '--icon[icon path to install into hicolor, or icon name]:icon:_files' \
+    '--categories[desktop categories]:categories:_appimage-desktop_categories' \
+    '--startup-wm-class[window class]:class:' \
+    '--desktop-id[desktop file basename without .desktop]:id:' \
+    '--no-cleanup-old[do not add appimage-wrapper --cleanup-old]' \
+    '--flags-file[add appimage-wrapper --flags-file to generated Exec]:flags file:_files' \
+    '--no-flags[add appimage-wrapper --no-flags to generated Exec]' \
+    '--env-file[add appimage-wrapper --env-file to generated Exec]:env file:_files' \
+    '--no-env[add appimage-wrapper --no-env to generated Exec]' \
+    '--terminal[set Terminal=true]' \
+    '--no-overwrite[refuse to replace an existing desktop file]' \
+    '--dry-run[print desktop entry instead of writing files]' \
+    '1:app name:->app' \
+    '*::app argument:_normal' && return
+
+  case $state in
+    app)
+      _wanted appimage-apps expl 'AppImage apps' _appimage-desktop_app_names
+      ;;
+  esac
+}
+
+_appimage-desktop "$@"

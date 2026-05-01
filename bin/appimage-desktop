@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+applications_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+icons_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+appimage_wrapper="${APPIMAGE_WRAPPER_BIN:-/usr/bin/appimage-wrapper}"
+
+name=
+comment="AppImage application"
+icon=
+categories="Utility;"
+startup_wm_class=
+desktop_id=
+cleanup_old=true
+read_flags=true
+flags_file=
+read_env=true
+env_file=
+terminal=false
+dry_run=false
+overwrite=true
+app_args=()
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: appimage-desktop [options] <app-name> [-- app args...]
+
+Create a user desktop entry that launches an AppImage through appimage-wrapper.
+
+Options:
+  --name <name>              Display name. Default: app name.
+  --comment <text>           Comment. Default: AppImage application.
+  --icon <path|name>         Icon path to install into hicolor, or existing icon name.
+  --categories <list>        Desktop categories. Default: Utility;
+  --startup-wm-class <class> StartupWMClass. Default: app name.
+  --desktop-id <id>          Desktop file basename. Default: sanitized app name.
+  --no-cleanup-old           Do not add appimage-wrapper --cleanup-old.
+  --flags-file <file>        Add appimage-wrapper --flags-file <file>.
+  --no-flags                 Add appimage-wrapper --no-flags.
+  --env-file <file>          Add appimage-wrapper --env-file <file>.
+  --no-env                   Add appimage-wrapper --no-env.
+  --terminal                 Set Terminal=true. Default: false.
+  --no-overwrite             Refuse to replace an existing desktop file.
+  --dry-run                  Print the desktop entry instead of writing files.
+  -h, --help                 Show this help.
+USAGE
+}
+
+sanitize_id() {
+  local value=$1
+  value=${value// /-}
+  value=${value//[^A-Za-z0-9._-]/-}
+  value=${value##[-.]}
+  value=${value%%[-.]}
+  [[ -n "$value" ]] || value=appimage-app
+  printf '%s' "$value"
+}
+
+desktop_escape() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//$'\n'/ }
+  value=${value//;/\\;}
+  printf '%s' "$value"
+}
+
+exec_quote() {
+  local value=$1
+  if [[ "$value" =~ ^[A-Za-z0-9_@%+=:,./-]+$ ]]; then
+    printf '%s' "$value"
+  else
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/ }
+    printf '"%s"' "$value"
+  fi
+}
+
+install_icon() {
+  local source=$1
+  local target_name=$2
+  local ext size target_dir target
+
+  if [[ "$source" != */* ]]; then
+    printf '%s' "$source"
+    return 0
+  fi
+
+  if [[ ! -f "$source" ]]; then
+    printf 'appimage-desktop: icon not found: %s\n' "$source" >&2
+    exit 1
+  fi
+
+  ext=${source##*.}
+  ext=${ext,,}
+  case "$ext" in
+    png|svg|svgz|xpm) ;;
+    *)
+      printf 'appimage-desktop: unsupported icon extension: %s\n' "$source" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$ext" == svg || "$ext" == svgz ]]; then
+    target_dir="$icons_dir/scalable/apps"
+  else
+    size=
+    if command -v identify >/dev/null 2>&1; then
+      size=$(identify -format '%wx%h' "$source" 2>/dev/null || true)
+    fi
+    if [[ ! "$size" =~ ^[0-9]+x[0-9]+$ ]]; then
+      size=256x256
+    fi
+    target_dir="$icons_dir/$size/apps"
+  fi
+
+  target="$target_dir/$target_name.$ext"
+
+  if [[ "$dry_run" == false ]]; then
+    mkdir -p "$target_dir"
+    install -m 0644 "$source" "$target"
+  fi
+
+  printf '%s' "$target_name"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --name)
+      name=${2:?appimage-desktop: --name requires a value}
+      shift 2
+      ;;
+    --comment)
+      comment=${2:?appimage-desktop: --comment requires a value}
+      shift 2
+      ;;
+    --icon)
+      icon=${2:?appimage-desktop: --icon requires a value}
+      shift 2
+      ;;
+    --categories)
+      categories=${2:?appimage-desktop: --categories requires a value}
+      shift 2
+      ;;
+    --startup-wm-class)
+      startup_wm_class=${2:?appimage-desktop: --startup-wm-class requires a value}
+      shift 2
+      ;;
+    --desktop-id)
+      desktop_id=${2:?appimage-desktop: --desktop-id requires a value}
+      shift 2
+      ;;
+    --no-cleanup-old)
+      cleanup_old=false
+      shift
+      ;;
+    --flags-file)
+      flags_file=${2:?appimage-desktop: --flags-file requires a value}
+      read_flags=true
+      shift 2
+      ;;
+    --no-flags)
+      read_flags=false
+      flags_file=
+      shift
+      ;;
+    --env-file)
+      env_file=${2:?appimage-desktop: --env-file requires a value}
+      read_env=true
+      shift 2
+      ;;
+    --no-env)
+      read_env=false
+      env_file=
+      shift
+      ;;
+    --terminal)
+      terminal=true
+      shift
+      ;;
+    --no-overwrite)
+      overwrite=false
+      shift
+      ;;
+    --dry-run)
+      dry_run=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      printf 'appimage-desktop: unknown option: %s\n' "$1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 2
+fi
+
+app_name=$1
+shift
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+app_args=("$@")
+
+if [[ "$app_name" == */* || -z "$app_name" ]]; then
+  printf 'appimage-desktop: invalid app name: %s\n' "$app_name" >&2
+  exit 2
+fi
+
+name=${name:-$app_name}
+startup_wm_class=${startup_wm_class:-$app_name}
+desktop_id=${desktop_id:-$(sanitize_id "$app_name")}
+icon_name=$(sanitize_id "${desktop_id,,}")
+desktop_file="$applications_dir/$desktop_id.desktop"
+
+if [[ -n "$icon" ]]; then
+  icon_name=$(install_icon "$icon" "$icon_name")
+fi
+
+if [[ "$overwrite" == false && -e "$desktop_file" ]]; then
+  printf 'appimage-desktop: desktop file already exists: %s\n' "$desktop_file" >&2
+  exit 1
+fi
+
+exec_parts=("$appimage_wrapper")
+if [[ "$cleanup_old" == true ]]; then
+  exec_parts+=("--cleanup-old")
+fi
+if [[ -n "$flags_file" ]]; then
+  exec_parts+=("--flags-file" "$flags_file")
+elif [[ "$read_flags" == false ]]; then
+  exec_parts+=("--no-flags")
+fi
+if [[ -n "$env_file" ]]; then
+  exec_parts+=("--env-file" "$env_file")
+elif [[ "$read_env" == false ]]; then
+  exec_parts+=("--no-env")
+fi
+exec_parts+=("$app_name")
+exec_parts+=("${app_args[@]}")
+
+exec_line=
+for part in "${exec_parts[@]}"; do
+  if [[ -n "$exec_line" ]]; then
+    exec_line+=" "
+  fi
+  exec_line+="$(exec_quote "$part")"
+done
+
+desktop_entry=$(
+  printf '%s\n' '[Desktop Entry]'
+  printf 'Name=%s\n' "$(desktop_escape "$name")"
+  printf 'Comment=%s\n' "$(desktop_escape "$comment")"
+  printf 'Exec=%s\n' "$exec_line"
+  printf 'Icon=%s\n' "$(desktop_escape "$icon_name")"
+  printf 'Terminal=%s\n' "$terminal"
+  printf '%s\n' 'Type=Application'
+  printf 'Categories=%s\n' "${categories//$'\n'/}"
+  if [[ -n "$startup_wm_class" ]]; then
+    printf 'StartupWMClass=%s\n' "$(desktop_escape "$startup_wm_class")"
+  fi
+)
+
+if [[ "$dry_run" == true ]]; then
+  printf '%s\n' "$desktop_entry"
+  exit 0
+fi
+
+mkdir -p "$applications_dir"
+printf '%s\n' "$desktop_entry" > "$desktop_file"
+chmod 0644 "$desktop_file"
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+  desktop-file-validate "$desktop_file" || true
+fi
+
+printf '%s\n' "$desktop_file"

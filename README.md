@@ -1,0 +1,138 @@
+# appimage-wrapper
+
+Small helpers for launching versioned AppImage files and generating desktop entries that keep using the newest installed version.
+
+## Commands
+
+### `appimage-wrapper`
+
+```bash
+appimage-wrapper [--cleanup-old] [--flags-file FILE] [--no-flags] [--env-file FILE] [--no-env] APP [args...]
+```
+
+`appimage-wrapper` searches `PATH` for files named:
+
+```text
+APP-VERSION.AppImage
+```
+
+It selects the highest version with `sort -V` and runs it. Extra arguments after `APP` are passed to the AppImage unchanged.
+
+Examples:
+
+```bash
+appimage-wrapper MQTTX
+appimage-wrapper --cleanup-old MQTTX --enable-features=WaylandWindowDecorations
+APPIMAGE_WRAPPER_DIR=~/.local/bin appimage-wrapper minerU
+```
+
+`--cleanup-old` removes older matching `APP-*.AppImage` files after the newest file is selected and before it is launched.
+
+### Flags files
+
+By default, flags are read in this order:
+
+```text
+~/.config/APP-flags.conf
+~/.config/APP/flags.conf
+~/.config/APP/user-flags.conf
+```
+
+Each non-empty, non-comment line is passed as one argument to the AppImage.
+
+```text
+--enable-features=WaylandWindowDecorations
+--ozone-platform-hint=auto
+```
+
+Use `--flags-file FILE` to read only explicitly listed files. It can be repeated. Use `--no-flags` to disable flags file loading.
+
+### Env files
+
+By default, environment files are read in this order:
+
+```text
+~/.config/APP.env
+~/.config/APP/.env
+~/.config/APP/user.env
+```
+
+Supported lines are `KEY=VALUE` and `export KEY=VALUE`. Empty lines and `#` comments are ignored. Files are parsed, not sourced.
+
+Use `--env-file FILE` to read only explicitly listed files. It can be repeated. Use `--no-env` to disable env file loading.
+
+### `appimage-desktop`
+
+```bash
+appimage-desktop [options] APP [-- app args...]
+```
+
+Creates a user desktop entry in:
+
+```text
+~/.local/share/applications/APP.desktop
+```
+
+Common options:
+
+```bash
+appimage-desktop MQTTX \
+  --name MQTTX \
+  --comment "MQTT Client Tool (AppImage)" \
+  --icon /path/to/mqttx.png \
+  --categories "Network;Development;" \
+  -- --enable-features=WaylandWindowDecorations --ozone-platform-hint=auto
+```
+
+Defaults:
+
+- `Name=APP`
+- `Comment=AppImage application`
+- `Categories=Utility;`
+- `StartupWMClass=APP`
+- `Terminal=false`
+- `Exec=/usr/bin/appimage-wrapper --cleanup-old APP`
+
+If `--icon` is a path, the icon is copied into the user hicolor theme and the desktop entry uses the relative icon name. If `--icon` is already a name, it is written directly.
+
+## Installation
+
+From a source checkout:
+
+```bash
+install -Dm755 bin/appimage-wrapper ~/.local/bin/appimage-wrapper
+install -Dm755 bin/appimage-desktop ~/.local/bin/appimage-desktop
+install -Dm644 bash/appimage-wrapper ~/.local/share/bash-completion/completions/appimage-wrapper
+install -Dm644 bash/appimage-desktop ~/.local/share/bash-completion/completions/appimage-desktop
+install -Dm644 zsh/_appimage-wrapper ~/.zfunc/_appimage-wrapper
+install -Dm644 zsh/_appimage-desktop ~/.zfunc/_appimage-desktop
+```
+
+Or build the Arch package:
+
+```bash
+makepkg -si
+```
+
+## Completion
+
+System package installs:
+
+- Bash completions to `/usr/share/bash-completion/completions`
+- Zsh completions to `/usr/share/zsh/site-functions`
+
+Reload Bash completions by opening a new shell or sourcing the installed completion file.
+
+Reload Zsh completions with:
+
+```zsh
+unfunction _appimage-wrapper _appimage-desktop 2>/dev/null
+autoload -Uz _appimage-wrapper _appimage-desktop
+```
+
+## Validation
+
+```bash
+bash -n bin/appimage-wrapper bin/appimage-desktop bash/appimage-wrapper bash/appimage-desktop
+zsh -n zsh/_appimage-wrapper zsh/_appimage-desktop
+```
