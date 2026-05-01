@@ -2,6 +2,14 @@
 
 Small helpers for launching versioned AppImage files and generating desktop entries that keep using the newest installed version.
 
+## Why
+
+Many AppImages update themselves from inside the application. After an update, the on-disk filename often changes because the version is part of the filename, so a desktop entry that points at one exact AppImage path can stop working.
+
+`appimage-wrapper` keeps desktop entries stable by launching an app by name, finding the highest `APP-*.AppImage` version available in `PATH`, and optionally deleting older versions after a successful selection.
+
+Many AppImages are Electron or Chromium applications, but they do not all honor Arch-style user flag files such as `~/.config/<app>-flags.conf`, `~/.config/electron-flags.conf`, or app-specific `user-flags.conf` files. The wrapper provides a consistent place to load per-app flags and environment variables before launching the AppImage.
+
 ## Commands
 
 ### `appimage-wrapper`
