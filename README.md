@@ -95,17 +95,22 @@ appimage-desktop MQTTX \
 
 Defaults:
 
+- If the newest matching AppImage contains a desktop entry, its metadata is used as the generated desktop entry template.
+- `Exec=` is always replaced with the generated `appimage-wrapper` command.
+- Explicit options such as `--name`, `--comment`, `--icon`, `--categories`, `--startup-wm-class`, and `--terminal` override the bundled desktop entry.
+
+If no bundled desktop entry is available, built-in defaults are used:
+
 - `Name=APP`
 - `Comment=AppImage application`
 - `Categories=Utility;`
 - `StartupWMClass=APP`
 - `Terminal=false`
-- `Exec=/usr/bin/appimage-wrapper --cleanup-old APP`
 - `Icon=` is the sanitized desktop id, unless an icon name is provided or an AppImage icon is extracted
 
 `--icon NAME` sets the icon name written to the desktop entry. `--icon-install FILE` installs a local `png`, `svg`, `svgz`, or `xpm` icon into the user hicolor theme. When both are used, the file is installed under `NAME`; when only `--icon-install` is used, it is installed under the sanitized desktop id.
 
-When neither icon option is provided, `appimage-desktop` tries to extract an icon from the newest matching `APP-*.AppImage` found through `APPIMAGE_WRAPPER_DIR` or `PATH`. Icon extraction is best effort; if it fails, the desktop entry is still generated with the default icon name.
+When neither icon option is provided, `appimage-desktop` tries to install the icon referenced by the bundled desktop entry from the newest matching `APP-*.AppImage` found through `APPIMAGE_WRAPPER_DIR` or `PATH`. Metadata and icon extraction are best effort; if they fail, the desktop entry is still generated with built-in defaults.
 
 ## Installation
 

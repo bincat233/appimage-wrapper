@@ -6,11 +6,16 @@ icons_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 appimage_wrapper="${APPIMAGE_WRAPPER_BIN:-/usr/bin/appimage-wrapper}"
 
 name=
-comment="AppImage application"
+name_set=false
+comment=
+comment_set=false
 icon=
+icon_set=false
 icon_install=
-categories="Utility;"
+categories=
+categories_set=false
 startup_wm_class=
+startup_wm_class_set=false
 desktop_id=
 cleanup_old=true
 read_flags=true
@@ -18,12 +23,15 @@ flags_file=
 read_env=true
 env_file=
 terminal=false
+terminal_set=false
 dry_run=false
 overwrite=true
 app_args=()
 search_label="PATH"
 latest_appimage=
 extract_dir=
+extracted_desktop_file=
+extracted_icon_ref=
 extracted_icon_path=
 
 usage() {
@@ -68,6 +76,28 @@ desktop_escape() {
   value=${value//$'\n'/ }
   value=${value//;/\\;}
   printf '%s' "$value"
+}
+
+desktop_entry_value() {
+  local desktop_file=$1
+  local wanted_key=$2
+  local line key in_desktop=false
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    if [[ "$line" == "["*"]" ]]; then
+      [[ "$line" == "[Desktop Entry]" ]] && in_desktop=true || in_desktop=false
+      continue
+    fi
+
+    [[ "$in_desktop" == true && "$line" == *=* ]] || continue
+    key=${line%%=*}
+    [[ "$key" == "$wanted_key" ]] || continue
+    printf '%s' "${line#*=}"
+    return 0
+  done < "$desktop_file"
+
+  return 1
 }
 
 exec_quote() {
@@ -253,25 +283,15 @@ dir_icon_path() {
 }
 
 desktop_icon_name() {
-  local desktop_file=$1
-  local line
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line=${line%$'\r'}
-    [[ "$line" == Icon=* ]] || continue
-    line=${line#Icon=}
-    [[ -n "$line" ]] || continue
-    printf '%s' "$line"
-    return 0
-  done < "$desktop_file"
-
-  return 1
+  desktop_entry_value "$1" Icon
 }
 
-extract_appimage_icon() {
+extract_appimage_metadata() {
   local appimage=$1
   local root desktop_file extracted_icon
 
+  extracted_desktop_file=
+  extracted_icon_ref=
   extracted_icon_path=
   extract_dir=$(mktemp -d "${TMPDIR:-/tmp}/appimage-desktop.XXXXXX")
 
@@ -289,17 +309,155 @@ extract_appimage_icon() {
 
   desktop_file=$(find "$root" -maxdepth 2 -type f -name '*.desktop' -print -quit)
   if [[ -n "$desktop_file" ]]; then
+    extracted_desktop_file=$desktop_file
     extracted_icon=$(desktop_icon_name "$desktop_file" || true)
     if [[ -n "$extracted_icon" ]]; then
+      extracted_icon_ref=$extracted_icon
       extracted_icon_path=$(find_icon_by_name "$root" "$extracted_icon" || true)
-      [[ -n "$extracted_icon_path" ]] && return 0
     fi
   fi
 
-  extracted_icon_path=$(dir_icon_path "$root" || true)
-  [[ -n "$extracted_icon_path" ]] && return 0
+  if [[ -z "$extracted_icon_path" ]]; then
+    extracted_icon_path=$(dir_icon_path "$root" || true)
+  fi
+
+  [[ -n "$extracted_desktop_file" || -n "$extracted_icon_path" ]] && return 0
 
   return 1
+}
+
+emit_desktop_missing_fields() {
+  if [[ "${saw_name:-false}" == false ]]; then
+    printf 'Name=%s\n' "$(desktop_escape "$name")"
+  fi
+  if [[ "${saw_comment:-false}" == false ]]; then
+    printf 'Comment=%s\n' "$(desktop_escape "$comment")"
+  fi
+  if [[ "${saw_exec:-false}" == false ]]; then
+    printf 'Exec=%s\n' "$exec_line"
+  fi
+  if [[ "${saw_icon:-false}" == false ]]; then
+    printf 'Icon=%s\n' "$(desktop_escape "$icon_name")"
+  fi
+  if [[ "${saw_terminal:-false}" == false ]]; then
+    printf 'Terminal=%s\n' "$terminal"
+  fi
+  if [[ "${saw_type:-false}" == false ]]; then
+    printf '%s\n' 'Type=Application'
+  fi
+  if [[ "${saw_categories:-false}" == false ]]; then
+    printf 'Categories=%s\n' "${categories//$'\n'/}"
+  fi
+  if [[ -n "$startup_wm_class" && "${saw_startup_wm_class:-false}" == false ]]; then
+    printf 'StartupWMClass=%s\n' "$(desktop_escape "$startup_wm_class")"
+  fi
+}
+
+desktop_entry_from_template() {
+  local template=$1
+  local line key in_desktop=false emitted_missing=false
+  local saw_name=false saw_comment=false saw_exec=false saw_icon=false
+  local saw_terminal=false saw_type=false saw_categories=false
+  local saw_startup_wm_class=false
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+
+    if [[ "$line" == "["*"]" ]]; then
+      if [[ "$in_desktop" == true && "$emitted_missing" == false ]]; then
+        emit_desktop_missing_fields
+        emitted_missing=true
+      fi
+      printf '%s\n' "$line"
+      [[ "$line" == "[Desktop Entry]" ]] && in_desktop=true || in_desktop=false
+      continue
+    fi
+
+    if [[ "$line" == *=* ]]; then
+      key=${line%%=*}
+      if [[ "$in_desktop" != true ]]; then
+        case "$key" in
+          Exec)
+            printf 'Exec=%s\n' "$exec_line"
+            continue
+            ;;
+          TryExec)
+            continue
+            ;;
+        esac
+      fi
+    fi
+
+    if [[ "$in_desktop" == true && "$line" == *=* ]]; then
+      case "$key" in
+        Name)
+          if [[ "$saw_name" == false ]]; then
+            printf 'Name=%s\n' "$(desktop_escape "$name")"
+            saw_name=true
+          fi
+          continue
+          ;;
+        Comment)
+          if [[ "$saw_comment" == false ]]; then
+            printf 'Comment=%s\n' "$(desktop_escape "$comment")"
+            saw_comment=true
+          fi
+          continue
+          ;;
+        Exec)
+          if [[ "$saw_exec" == false ]]; then
+            printf 'Exec=%s\n' "$exec_line"
+            saw_exec=true
+          fi
+          continue
+          ;;
+        TryExec)
+          continue
+          ;;
+        Icon)
+          if [[ "$saw_icon" == false ]]; then
+            printf 'Icon=%s\n' "$(desktop_escape "$icon_name")"
+            saw_icon=true
+          fi
+          continue
+          ;;
+        Terminal)
+          if [[ "$saw_terminal" == false ]]; then
+            printf 'Terminal=%s\n' "$terminal"
+            saw_terminal=true
+          fi
+          continue
+          ;;
+        Type)
+          if [[ "$saw_type" == false ]]; then
+            printf '%s\n' "$line"
+            saw_type=true
+          fi
+          continue
+          ;;
+        Categories)
+          if [[ "$saw_categories" == false ]]; then
+            printf 'Categories=%s\n' "${categories//$'\n'/}"
+            saw_categories=true
+          fi
+          continue
+          ;;
+        StartupWMClass)
+          if [[ -n "$startup_wm_class" && "$saw_startup_wm_class" == false ]]; then
+            printf 'StartupWMClass=%s\n' "$(desktop_escape "$startup_wm_class")"
+            saw_startup_wm_class=true
+          fi
+          continue
+          ;;
+      esac
+    fi
+
+    printf '%s\n' "$line"
+  done < "$template"
+
+  if [[ "$in_desktop" == true && "$emitted_missing" == false ]]; then
+    emit_desktop_missing_fields
+  fi
 }
 
 cleanup_extract_dir() {
@@ -314,14 +472,17 @@ while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --name)
       name=${2:?appimage-desktop: --name requires a value}
+      name_set=true
       shift 2
       ;;
     --comment)
       comment=${2:?appimage-desktop: --comment requires a value}
+      comment_set=true
       shift 2
       ;;
     --icon)
       icon=${2:?appimage-desktop: --icon requires a value}
+      icon_set=true
       shift 2
       ;;
     --icon-install)
@@ -330,10 +491,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --categories)
       categories=${2:?appimage-desktop: --categories requires a value}
+      categories_set=true
       shift 2
       ;;
     --startup-wm-class)
       startup_wm_class=${2:?appimage-desktop: --startup-wm-class requires a value}
+      startup_wm_class_set=true
       shift 2
       ;;
     --desktop-id)
@@ -366,6 +529,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --terminal)
       terminal=true
+      terminal_set=true
       shift
       ;;
     --no-overwrite)
@@ -412,11 +576,52 @@ if [[ "$app_name" == */* || -z "$app_name" ]]; then
   exit 2
 fi
 
-name=${name:-$app_name}
-startup_wm_class=${startup_wm_class:-$app_name}
 desktop_id=${desktop_id:-$(sanitize_id "$app_name")}
 icon_name=$(sanitize_id "${desktop_id,,}")
 desktop_file="$applications_dir/$desktop_id.desktop"
+
+if [[ "$overwrite" == false && -e "$desktop_file" ]]; then
+  printf 'appimage-desktop: desktop file already exists: %s\n' "$desktop_file" >&2
+  exit 1
+fi
+
+if find_latest_appimage; then
+  if ! extract_appimage_metadata "$latest_appimage"; then
+    printf 'appimage-desktop: warning: could not extract desktop metadata from %s; using built-in defaults\n' "$latest_appimage" >&2
+  fi
+else
+  printf 'appimage-desktop: warning: no match for %s-*.AppImage in %s; using built-in defaults\n' "$app_name" "$search_label" >&2
+fi
+
+if [[ -n "$extracted_desktop_file" ]]; then
+  if [[ "$name_set" == false ]]; then
+    name=$(desktop_entry_value "$extracted_desktop_file" Name || true)
+  fi
+  if [[ "$comment_set" == false ]]; then
+    comment=$(desktop_entry_value "$extracted_desktop_file" Comment || true)
+  fi
+  if [[ "$categories_set" == false ]]; then
+    categories=$(desktop_entry_value "$extracted_desktop_file" Categories || true)
+  fi
+  if [[ "$startup_wm_class_set" == false ]]; then
+    startup_wm_class=$(desktop_entry_value "$extracted_desktop_file" StartupWMClass || true)
+  fi
+  if [[ "$terminal_set" == false ]]; then
+    extracted_terminal=$(desktop_entry_value "$extracted_desktop_file" Terminal || true)
+    case "$extracted_terminal" in
+      true|false) terminal=$extracted_terminal ;;
+    esac
+  fi
+fi
+
+name=${name:-$app_name}
+comment=${comment:-AppImage application}
+categories=${categories:-Utility;}
+startup_wm_class=${startup_wm_class:-$app_name}
+
+if [[ "$icon_set" == false && -n "$extracted_icon_ref" && "$extracted_icon_ref" != */* && "$extracted_icon_ref" != *$'\n'* ]]; then
+  icon_name=$extracted_icon_ref
+fi
 
 if [[ -n "$icon" ]]; then
   if [[ "$icon" == */* || "$icon" == *$'\n'* ]]; then
@@ -426,23 +631,12 @@ if [[ -n "$icon" ]]; then
   icon_name=$icon
 fi
 
-if [[ "$overwrite" == false && -e "$desktop_file" ]]; then
-  printf 'appimage-desktop: desktop file already exists: %s\n' "$desktop_file" >&2
-  exit 1
-fi
-
 if [[ -n "$icon_install" ]]; then
   icon_name=$(install_icon "$icon_install" "$icon_name")
-elif [[ -z "$icon" ]]; then
-  if find_latest_appimage; then
-    if extract_appimage_icon "$latest_appimage"; then
-      icon_name=$(install_icon "$extracted_icon_path" "$icon_name")
-    else
-      warn_icon_fallback "could not extract an icon from $latest_appimage"
-    fi
-  else
-    warn_icon_fallback "no match for $app_name-*.AppImage in $search_label"
-  fi
+elif [[ "$icon_set" == false && -n "$extracted_icon_path" ]]; then
+  icon_name=$(install_icon "$extracted_icon_path" "$icon_name")
+elif [[ "$icon_set" == false && -n "$latest_appimage" && -z "$extracted_icon_ref" ]]; then
+  warn_icon_fallback "could not find an icon in AppImage metadata"
 fi
 
 exec_parts=("$appimage_wrapper")
@@ -470,19 +664,23 @@ for part in "${exec_parts[@]}"; do
   exec_line+="$(exec_quote "$part")"
 done
 
-desktop_entry=$(
-  printf '%s\n' '[Desktop Entry]'
-  printf 'Name=%s\n' "$(desktop_escape "$name")"
-  printf 'Comment=%s\n' "$(desktop_escape "$comment")"
-  printf 'Exec=%s\n' "$exec_line"
-  printf 'Icon=%s\n' "$(desktop_escape "$icon_name")"
-  printf 'Terminal=%s\n' "$terminal"
-  printf '%s\n' 'Type=Application'
-  printf 'Categories=%s\n' "${categories//$'\n'/}"
-  if [[ -n "$startup_wm_class" ]]; then
-    printf 'StartupWMClass=%s\n' "$(desktop_escape "$startup_wm_class")"
-  fi
-)
+if [[ -n "$extracted_desktop_file" ]]; then
+  desktop_entry=$(desktop_entry_from_template "$extracted_desktop_file")
+else
+  desktop_entry=$(
+    printf '%s\n' '[Desktop Entry]'
+    printf 'Name=%s\n' "$(desktop_escape "$name")"
+    printf 'Comment=%s\n' "$(desktop_escape "$comment")"
+    printf 'Exec=%s\n' "$exec_line"
+    printf 'Icon=%s\n' "$(desktop_escape "$icon_name")"
+    printf 'Terminal=%s\n' "$terminal"
+    printf '%s\n' 'Type=Application'
+    printf 'Categories=%s\n' "${categories//$'\n'/}"
+    if [[ -n "$startup_wm_class" ]]; then
+      printf 'StartupWMClass=%s\n' "$(desktop_escape "$startup_wm_class")"
+    fi
+  )
+fi
 
 if [[ "$dry_run" == true ]]; then
   printf '%s\n' "$desktop_entry"

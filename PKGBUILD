@@ -1,6 +1,6 @@
 # Maintainer: bincat233
 pkgname=appimage-wrapper
-pkgver=0.0.2
+pkgver=0.0.3
 pkgrel=1
 pkgdesc='Wrapper and desktop entry generator for versioned AppImage launches'
 arch=('any')
