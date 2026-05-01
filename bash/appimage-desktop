@@ -32,7 +32,7 @@ _appimage_desktop_has_app() {
   for ((i = 1; i < cword; i++)); do
     word=${words[i]}
     case "$word" in
-      --name|--comment|--icon|--categories|--startup-wm-class|--desktop-id|--flags-file|--env-file)
+      --name|--comment|--icon|--icon-install|--categories|--startup-wm-class|--desktop-id|--flags-file|--env-file)
         ((i++))
         ;;
       --no-cleanup-old|--no-flags|--no-env|--terminal|--no-overwrite|--dry-run|--help|-h|--)
@@ -53,7 +53,7 @@ _appimage_desktop() {
   _init_completion || return
 
   case "$prev" in
-    --icon|--flags-file|--env-file)
+    --icon-install|--flags-file|--env-file)
       _filedir
       return
       ;;
@@ -61,13 +61,13 @@ _appimage_desktop() {
       COMPREPLY=($(compgen -W 'Utility Development Network Graphics AudioVideo Office System Settings Education Game' -- "$cur"))
       return
       ;;
-    --name|--comment|--startup-wm-class|--desktop-id)
+    --name|--comment|--icon|--startup-wm-class|--desktop-id)
       return
       ;;
   esac
 
   if [[ $cur == -* ]]; then
-    COMPREPLY=($(compgen -W '--name --comment --icon --categories --startup-wm-class --desktop-id --no-cleanup-old --flags-file --no-flags --env-file --no-env --terminal --no-overwrite --dry-run --help' -- "$cur"))
+    COMPREPLY=($(compgen -W '--name --comment --icon --icon-install --categories --startup-wm-class --desktop-id --no-cleanup-old --flags-file --no-flags --env-file --no-env --terminal --no-overwrite --dry-run --help' -- "$cur"))
     return
   fi
 

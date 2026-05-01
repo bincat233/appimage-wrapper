@@ -64,7 +64,8 @@ _appimage-desktop() {
     '(-h --help)'{-h,--help}'[show usage]' \
     '--name[desktop display name]:name:' \
     '--comment[desktop comment]:comment:' \
-    '--icon[icon path to install into hicolor, or icon name]:icon:_files' \
+    '--icon[desktop icon name]:icon:' \
+    '--icon-install[install icon file into hicolor]:icon file:_files' \
     '--categories[desktop categories]:categories:_appimage-desktop_categories' \
     '--startup-wm-class[window class]:class:' \
     '--desktop-id[desktop file basename without .desktop]:id:' \

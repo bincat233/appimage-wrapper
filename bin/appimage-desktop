@@ -8,6 +8,7 @@ appimage_wrapper="${APPIMAGE_WRAPPER_BIN:-/usr/bin/appimage-wrapper}"
 name=
 comment="AppImage application"
 icon=
+icon_install=
 categories="Utility;"
 startup_wm_class=
 desktop_id=
@@ -20,6 +21,10 @@ terminal=false
 dry_run=false
 overwrite=true
 app_args=()
+search_label="PATH"
+latest_appimage=
+extract_dir=
+extracted_icon_path=
 
 usage() {
   cat >&2 <<'USAGE'
@@ -30,7 +35,8 @@ Create a user desktop entry that launches an AppImage through appimage-wrapper.
 Options:
   --name <name>              Display name. Default: app name.
   --comment <text>           Comment. Default: AppImage application.
-  --icon <path|name>         Icon path to install into hicolor, or existing icon name.
+  --icon <name>              Icon name to write into the desktop entry.
+  --icon-install <path>      Install this icon file into the user hicolor theme.
   --categories <list>        Desktop categories. Default: Utility;
   --startup-wm-class <class> StartupWMClass. Default: app name.
   --desktop-id <id>          Desktop file basename. Default: sanitized app name.
@@ -81,11 +87,6 @@ install_icon() {
   local target_name=$2
   local ext size target_dir target
 
-  if [[ "$source" != */* ]]; then
-    printf '%s' "$source"
-    return 0
-  fi
-
   if [[ ! -f "$source" ]]; then
     printf 'appimage-desktop: icon not found: %s\n' "$source" >&2
     exit 1
@@ -124,6 +125,191 @@ install_icon() {
   printf '%s' "$target_name"
 }
 
+warn_icon_fallback() {
+  printf 'appimage-desktop: warning: %s; using icon name: %s\n' "$1" "$icon_name" >&2
+}
+
+add_search_dir() {
+  local dir=$1
+
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+
+  case ":$seen_dirs:" in
+    *:"$dir":*) return 0 ;;
+  esac
+
+  search_dirs+=("$dir")
+  seen_dirs+="$dir:"
+}
+
+find_latest_appimage() {
+  local dir path file version
+  local selected
+
+  latest_appimage=
+  search_dirs=()
+  seen_dirs=":"
+  search_label="PATH"
+
+  if [[ -n "${APPIMAGE_WRAPPER_DIR:-}" ]]; then
+    search_label="$APPIMAGE_WRAPPER_DIR"
+    add_search_dir "$APPIMAGE_WRAPPER_DIR"
+  else
+    IFS=: read -r -a path_dirs <<< "${PATH:-}"
+    for dir in "${path_dirs[@]}"; do
+      add_search_dir "$dir"
+    done
+  fi
+
+  mapfile -d '' matches < <(
+    for dir in "${search_dirs[@]}"; do
+      find "$dir" -maxdepth 1 -type f -name "$app_name-*.AppImage" -print0
+    done
+  )
+
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    return 1
+  fi
+
+  selected=$(
+    for path in "${matches[@]}"; do
+      file=${path##*/}
+      version=${file#"$app_name-"}
+      version=${version%.AppImage}
+      printf '%s\t%s\n' "$version" "$path"
+    done | sort -t $'\t' -k1,1V | tail -n 1 | cut -f2-
+  )
+
+  [[ -n "$selected" ]] || return 1
+  latest_appimage=$selected
+}
+
+supported_icon_path() {
+  local source=$1
+  local ext
+
+  [[ -f "$source" ]] || return 1
+  ext=${source##*.}
+  ext=${ext,,}
+
+  case "$ext" in
+    png|svg|svgz|xpm) printf '%s' "$source" ;;
+    *) return 1 ;;
+  esac
+}
+
+find_icon_by_name() {
+  local root=$1
+  local name=$2
+  local candidate base ext
+  local -a exts=(png svg svgz xpm)
+
+  [[ -n "$name" ]] || return 1
+
+  if [[ "$name" == */* ]]; then
+    candidate="$root/$name"
+    supported_icon_path "$candidate" && return 0
+    for ext in "${exts[@]}"; do
+      supported_icon_path "$candidate.$ext" && return 0
+    done
+    base=${name##*/}
+  else
+    base=$name
+  fi
+
+  candidate=$(find "$root" -type f -name "$base" -print -quit)
+  if [[ -n "$candidate" ]] && supported_icon_path "$candidate" >/dev/null; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+
+  for ext in "${exts[@]}"; do
+    candidate=$(find "$root" -type f -name "$base.$ext" -print -quit)
+    if [[ -n "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+dir_icon_path() {
+  local root=$1
+  local source="$root/.DirIcon"
+  local target
+
+  if [[ -L "$source" ]]; then
+    target=$(readlink "$source") || return 1
+    if [[ "$target" == /* ]]; then
+      supported_icon_path "$target"
+    else
+      supported_icon_path "$root/$target"
+    fi
+    return
+  fi
+
+  supported_icon_path "$source"
+}
+
+desktop_icon_name() {
+  local desktop_file=$1
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    [[ "$line" == Icon=* ]] || continue
+    line=${line#Icon=}
+    [[ -n "$line" ]] || continue
+    printf '%s' "$line"
+    return 0
+  done < "$desktop_file"
+
+  return 1
+}
+
+extract_appimage_icon() {
+  local appimage=$1
+  local root desktop_file extracted_icon
+
+  extracted_icon_path=
+  extract_dir=$(mktemp -d "${TMPDIR:-/tmp}/appimage-desktop.XXXXXX")
+
+  if [[ ! -x "$appimage" ]]; then
+    chmod +x "$appimage" 2>/dev/null || return 1
+  fi
+
+  (
+    cd "$extract_dir"
+    "$appimage" --appimage-extract >/dev/null
+  ) || return 1
+
+  root="$extract_dir/squashfs-root"
+  [[ -d "$root" ]] || return 1
+
+  desktop_file=$(find "$root" -maxdepth 2 -type f -name '*.desktop' -print -quit)
+  if [[ -n "$desktop_file" ]]; then
+    extracted_icon=$(desktop_icon_name "$desktop_file" || true)
+    if [[ -n "$extracted_icon" ]]; then
+      extracted_icon_path=$(find_icon_by_name "$root" "$extracted_icon" || true)
+      [[ -n "$extracted_icon_path" ]] && return 0
+    fi
+  fi
+
+  extracted_icon_path=$(dir_icon_path "$root" || true)
+  [[ -n "$extracted_icon_path" ]] && return 0
+
+  return 1
+}
+
+cleanup_extract_dir() {
+  if [[ -n "${extract_dir:-}" && -d "$extract_dir" ]]; then
+    rm -rf -- "$extract_dir"
+  fi
+}
+
+trap cleanup_extract_dir EXIT
+
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --name)
@@ -136,6 +322,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --icon)
       icon=${2:?appimage-desktop: --icon requires a value}
+      shift 2
+      ;;
+    --icon-install)
+      icon_install=${2:?appimage-desktop: --icon-install requires a value}
       shift 2
       ;;
     --categories)
@@ -229,12 +419,30 @@ icon_name=$(sanitize_id "${desktop_id,,}")
 desktop_file="$applications_dir/$desktop_id.desktop"
 
 if [[ -n "$icon" ]]; then
-  icon_name=$(install_icon "$icon" "$icon_name")
+  if [[ "$icon" == */* || "$icon" == *$'\n'* ]]; then
+    printf 'appimage-desktop: invalid icon name: %s\n' "$icon" >&2
+    exit 2
+  fi
+  icon_name=$icon
 fi
 
 if [[ "$overwrite" == false && -e "$desktop_file" ]]; then
   printf 'appimage-desktop: desktop file already exists: %s\n' "$desktop_file" >&2
   exit 1
+fi
+
+if [[ -n "$icon_install" ]]; then
+  icon_name=$(install_icon "$icon_install" "$icon_name")
+elif [[ -z "$icon" ]]; then
+  if find_latest_appimage; then
+    if extract_appimage_icon "$latest_appimage"; then
+      icon_name=$(install_icon "$extracted_icon_path" "$icon_name")
+    else
+      warn_icon_fallback "could not extract an icon from $latest_appimage"
+    fi
+  else
+    warn_icon_fallback "no match for $app_name-*.AppImage in $search_label"
+  fi
 fi
 
 exec_parts=("$appimage_wrapper")
