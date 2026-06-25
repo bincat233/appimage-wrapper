@@ -72,16 +72,18 @@ seen_dirs=":"
 search_label="PATH"
 
 add_search_dir() {
-  local dir=$1
+  local dir=$1 real_dir
 
   [[ -n "$dir" && -d "$dir" ]] || return 0
 
+  real_dir=$(cd -- "$dir" && pwd -P) || return 0
+
   case ":$seen_dirs:" in
-    *:"$dir":*) return 0 ;;
+    *:"$real_dir":*) return 0 ;;
   esac
 
-  search_dirs+=("$dir")
-  seen_dirs+="$dir:"
+  search_dirs+=("$real_dir")
+  seen_dirs+="$real_dir:"
 }
 
 if [[ "$app_name" == */* || -z "$app_name" ]]; then

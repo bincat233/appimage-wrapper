@@ -66,6 +66,8 @@ _appimage-desktop() {
     '--comment[desktop comment]:comment:' \
     '--icon[desktop icon name]:icon:' \
     '--icon-install[install icon file into hicolor]:icon file:_files' \
+    '--install[copy this AppImage into place and make it executable]:AppImage file:_files' \
+    '--install-dir[install destination directory (default\: ~/.local/bin)]:directory:_files -/' \
     '--categories[desktop categories]:categories:_appimage-desktop_categories' \
     '--startup-wm-class[window class]:class:' \
     '--desktop-id[desktop file basename without .desktop]:id:' \

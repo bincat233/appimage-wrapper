@@ -12,6 +12,8 @@ comment_set=false
 icon=
 icon_set=false
 icon_install=
+install_file=
+install_dir=
 categories=
 categories_set=false
 startup_wm_class=
@@ -45,6 +47,8 @@ Options:
   --comment <text>           Comment. Default: AppImage application.
   --icon <name>              Icon name to write into the desktop entry.
   --icon-install <path>      Install this icon file into the user hicolor theme.
+  --install <file>           Copy this AppImage into --install-dir and make it executable.
+  --install-dir <dir>        Install destination. Default: ~/.local/bin. Implies APPIMAGE_WRAPPER_DIR.
   --categories <list>        Desktop categories. Default: Utility;
   --startup-wm-class <class> StartupWMClass. Default: app name.
   --desktop-id <id>          Desktop file basename. Default: sanitized app name.
@@ -160,16 +164,18 @@ warn_icon_fallback() {
 }
 
 add_search_dir() {
-  local dir=$1
+  local dir=$1 real_dir
 
   [[ -n "$dir" && -d "$dir" ]] || return 0
 
+  real_dir=$(cd -- "$dir" && pwd -P) || return 0
+
   case ":$seen_dirs:" in
-    *:"$dir":*) return 0 ;;
+    *:"$real_dir":*) return 0 ;;
   esac
 
-  search_dirs+=("$dir")
-  seen_dirs+="$dir:"
+  search_dirs+=("$real_dir")
+  seen_dirs+="$real_dir:"
 }
 
 find_latest_appimage() {
@@ -377,10 +383,6 @@ desktop_entry_from_template() {
       key=${line%%=*}
       if [[ "$in_desktop" != true ]]; then
         case "$key" in
-          Exec)
-            printf 'Exec=%s\n' "$exec_line"
-            continue
-            ;;
           TryExec)
             continue
             ;;
@@ -489,6 +491,14 @@ while [[ $# -gt 0 ]]; do
       icon_install=${2:?appimage-desktop: --icon-install requires a value}
       shift 2
       ;;
+    --install)
+      install_file=${2:?appimage-desktop: --install requires a value}
+      shift 2
+      ;;
+    --install-dir)
+      install_dir=${2:?appimage-desktop: --install-dir requires a value}
+      shift 2
+      ;;
     --categories)
       categories=${2:?appimage-desktop: --categories requires a value}
       categories_set=true
@@ -583,6 +593,21 @@ desktop_file="$applications_dir/$desktop_id.desktop"
 if [[ "$overwrite" == false && -e "$desktop_file" ]]; then
   printf 'appimage-desktop: desktop file already exists: %s\n' "$desktop_file" >&2
   exit 1
+fi
+
+if [[ -n "$install_file" ]]; then
+  if [[ ! -f "$install_file" ]]; then
+    printf 'appimage-desktop: install file not found: %s\n' "$install_file" >&2
+    exit 1
+  fi
+  install_dir=${install_dir:-$HOME/.local/bin}
+  if [[ "$dry_run" == false ]]; then
+    mkdir -p "$install_dir"
+    install -Dm755 "$install_file" "$install_dir/$(basename "$install_file")"
+  fi
+  if [[ -z "${APPIMAGE_WRAPPER_DIR:-}" ]]; then
+    APPIMAGE_WRAPPER_DIR=$install_dir
+  fi
 fi
 
 if find_latest_appimage; then
