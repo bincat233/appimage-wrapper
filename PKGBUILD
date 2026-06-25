@@ -1,6 +1,6 @@
 # Maintainer: bincat233
 pkgname=appimage-wrapper
-pkgver=0.0.3
+pkgver=0.0.5
 pkgrel=1
 pkgdesc='Wrapper and desktop entry generator for versioned AppImage launches'
 arch=('any')
@@ -13,11 +13,11 @@ optdepends=(
   'imagemagick: detect icon dimensions when installing PNG icons'
   'desktop-file-utils: validate generated desktop files'
 )
-source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('SKIP')
+source=()
+sha256sums=()
 
 package() {
-  cd "${srcdir}/${pkgname}-${pkgver}"
+  cd "${startdir}"
 
   install -Dm755 bin/appimage-wrapper "${pkgdir}/usr/bin/appimage-wrapper"
   install -Dm755 bin/appimage-desktop "${pkgdir}/usr/bin/appimage-desktop"
